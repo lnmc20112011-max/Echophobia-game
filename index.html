@@ -82,10 +82,11 @@
             padding: 0 10px;
         }
         .highlight { color: #00ffcc; font-weight: bold; }
+        .item-hl { color: #00a2ff; font-weight: bold; }
 
         /* HỆ THỐNG NÚT BẤM ĐIỆN THOẠI (D-PAD) */
         #mobile-controls {
-            display: none; /* Mặc định ẩn trên máy tính */
+            display: none;
             width: 100%;
             max-width: 400px;
             margin-top: 15px;
@@ -125,10 +126,9 @@
             font-size: 14px;
         }
         
-        /* Hiện nút bấm khi ở chế độ mobile/cảm ứng */
         @media (max-width: 768px) {
             #mobile-controls { display: flex; }
-            #instructions { display: none; } /* Ẩn hướng dẫn bàn phím trên đt */
+            #instructions { display: none; }
         }
     </style>
 </head>
@@ -145,7 +145,8 @@
     </div>
     
     <div id="instructions">
-        Di chuyển: <span class="highlight">WASD/Mũi Tên</span> (Giữ <span class="highlight">Shift</span> đi rón rén) | Ping: <span class="highlight">Click chuột</span> vào màn hình.
+        Di chuyển: <span class="highlight">WASD/Mũi Tên</span> (Giữ <span class="highlight">Shift</span> đi rón rén) | Ping: <span class="highlight">Click chuột</span> vào màn hình. <br>
+        Ăn <span class="item-hl">Hộp Radar (Xanh dương)</span> để quét toàn bản đồ. <span class="highlight" style="color:#ffff00">Đích (Vàng)</span> đã bị ẩn ngẫu nhiên!
     </div>
 
     <div id="mobile-controls">
@@ -170,56 +171,113 @@ window.addEventListener("load", () => {
         const loader = document.getElementById("loading-screen");
         loader.style.opacity = 0;
         setTimeout(() => loader.style.display = "none", 500);
-    }, 2000); // 2000ms = 2 giây
+    }, 2000);
 });
 
 // Trạng thái game
 let gameRunning = true;
 let win = false;
 
-// Người chơi
-const player = { x: 50, y: 50, radius: 8, speed: 3, color: "#00ffcc" };
-const goal = { x: 750, y: 550, radius: 15, color: "#ffff00" };
+// Người chơi (ĐÃ HẠ TỐC ĐỘ: Chạy từ 3 -> 2.2 | Rón rén từ 1.2 -> 0.8)
+const player = { x: 40, y: 40, radius: 8, speed: 2.2, color: "#00ffcc" };
+
+// Đích đến (Sẽ ẩn trong bóng tối)
+const goal = { x: 750, y: 550, radius: 15, color: "#ffff00", opacity: 0 };
+
+// Vật phẩm hỗ trợ Radar
+const radarItem = { x: 0, y: 0, size: 16, color: "#00a2ff", opacity: 0, active: true };
 
 // Điều khiển
 const keys = {};
 let touchMovement = { up: false, down: false, left: false, right: false };
-let isSneaking = false; // Mặc định Mobile là chạy, bấm nút sẽ chuyển thành rón rén
+let isSneaking = false;
 
 window.addEventListener("keydown", e => keys[e.code] = true);
 window.addEventListener("keyup", e => keys[e.code] = false);
 
-// Thiết lập bản đồ & kẻ địch
-const walls = [
-    {x: 0, y: 0, w: 800, h: 10}, {x: 0, y: 0, w: 10, h: 600},
-    {x: 0, y: 590, w: 800, h: 10}, {x: 790, y: 0, w: 10, h: 600},
-    {x: 150, y: 0, w: 30, h: 400}, {x: 300, y: 200, w: 30, h: 400},
-    {x: 450, y: 0, w: 30, h: 350}, {x: 600, y: 250, w: 30, h: 350}, {x: 450, y: 450, w: 150, h: 30}
-];
-walls.forEach(w => w.opacity = 0);
-
-const enemies = [
-    { x: 220, y: 150, targetX: 220, targetY: 150, state: "patrol", speed: 1.5, angle: 0, patrolYStart: 100, patrolYEnd: 500, dir: 1, opacity: 0 },
-    { x: 380, y: 450, targetX: 380, targetY: 450, state: "patrol", speed: 1.5, angle: 0, patrolYStart: 100, patrolYEnd: 500, dir: -1, opacity: 0 },
-    { x: 530, y: 200, targetX: 530, targetY: 200, state: "patrol", speed: 1.5, angle: 0, patrolYStart: 50, patrolYEnd: 400, dir: 1, opacity: 0 },
-    { x: 700, y: 400, targetX: 700, targetY: 400, state: "patrol", speed: 1.8, angle: 0, patrolYStart: 100, patrolYEnd: 500, dir: -1, opacity: 0 }
-];
-
+// Khởi tạo mảng tường và kẻ địch
+let walls = [];
+let enemies = [];
 const pings = [];
 
-// Hàm kích hoạt phát sóng âm (Dùng chung PC & Mobile)
-function triggerPing(targetX, targetY) {
-    if (!gameRunning) { resetGame(); return; }
-    const angle = Math.atan2(targetY - player.y, targetX - player.x);
-    pings.push({ x: player.x, y: player.y, radius: 5, maxRadius: 250, speed: 7, angle: angle, type: "ping" });
-    enemies.forEach(enemy => {
-        if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < 250) {
-            enemy.state = "chase"; enemy.targetX = player.x; enemy.targetY = player.y;
+// HÀM TẠO MAP NGẪU NHIÊN & NHIỀU GÓC NGÁCH
+function generateRandomMap() {
+    walls = [
+        // Viền bản đồ cố định
+        {x: 0, y: 0, w: 800, h: 10, opacity: 0}, {x: 0, y: 0, w: 10, h: 600, opacity: 0},
+        {x: 0, y: 590, w: 800, h: 10, opacity: 0}, {x: 790, y: 0, w: 10, h: 600, opacity: 0}
+    ];
+
+    // Sinh các khối tường ngẫu nhiên dạng lưới Grid để tạo nhiều ngóc ngách khó chịu
+    const columns = 7;
+    const rows = 5;
+    const cellWidth = 700 / columns;
+    const cellHeight = 500 / rows;
+
+    for (let c = 0; c < columns; c++) {
+        for (let r = 0; r < rows; r++) {
+            // Bỏ qua khu vực xuất phát của người chơi ở góc trên bên trái
+            if (c <= 1 && r <= 1) continue;
+
+            // Tỷ lệ xuất hiện tường là 65% để tạo độ dày đặc và lắt léo
+            if (Math.random() < 0.65) {
+                let w = Math.random() < 0.5 ? 25 : cellWidth * 0.6;
+                let h = w === 25 ? cellHeight * 0.8 : 25;
+                let x = 80 + c * cellWidth + Math.random() * (cellWidth - w);
+                let y = 60 + r * cellHeight + Math.random() * (cellHeight - h);
+                
+                // Đảm bảo không đè lên góc đích mặc định
+                if (x > 700 && y > 500) continue;
+
+                walls.push({ x: x, y: y, w: w, h: h, opacity: 0 });
+            }
         }
-    });
+    }
+
+    // Đặt ĐÍCH ĐẾN NGẪU NHIÊN ở nửa bên phải bản đồ (x từ 500 đến 750, y từ 100 đến 550)
+    goal.x = 500 + Math.random() * 250;
+    goal.y = 100 + Math.random() * 450;
+    goal.opacity = 0;
+
+    // Đặt VẬT PHẨM RADAR ngẫu nhiên ở khu vực giữa bản đồ
+    radarItem.x = 200 + Math.random() * 400;
+    radarItem.y = 100 + Math.random() * 400;
+    radarItem.opacity = 0;
+    radarItem.active = true;
+
+    // Cài đặt Kẻ địch (3 con đi tuần tra ngẫu nhiên xung quanh các khu vực trọng yếu)
+    enemies = [
+        { x: 300, y: 200, targetX: 300, targetY: 200, state: "patrol", speed: 1.3, angle: 0, opacity: 0, timer: 0 },
+        { x: 500, y: 450, targetX: 500, targetY: 450, state: "patrol", speed: 1.3, angle: 0, opacity: 0, timer: 0 },
+        { x: 650, y: 150, targetX: 650, targetY: 150, state: "patrol", speed: 1.5, angle: 0, opacity: 0, timer: 0 }
+    ];
 }
 
-// Click trên Máy tính
+// Phát sóng âm
+function triggerPing(targetX, targetY, customRadius = 250, isRadar = false) {
+    if (!gameRunning) { resetGame(); return; }
+    const angle = Math.atan2(targetY - player.y, targetX - player.x);
+    
+    pings.push({ 
+        x: isRadar ? targetX : player.x, 
+        y: isRadar ? targetY : player.y, 
+        radius: 5, 
+        maxRadius: customRadius, 
+        speed: isRadar ? 12 : 6, 
+        angle: angle, 
+        type: isRadar ? "radar" : "ping" 
+    });
+
+    if (!isRadar) {
+        enemies.forEach(enemy => {
+            if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < customRadius) {
+                enemy.state = "chase"; enemy.targetX = player.x; enemy.targetY = player.y;
+            }
+        });
+    }
+}
+
+// Sự kiện chuột/chạm
 canvas.addEventListener("mousedown", (e) => {
     const rect = canvas.getBoundingClientRect();
     const mouseX = ((e.clientX - rect.left) / rect.width) * 800;
@@ -227,56 +285,43 @@ canvas.addEventListener("mousedown", (e) => {
     triggerPing(mouseX, mouseY);
 });
 
-// Chạm màn hình Game trên Điện thoại để tự động Ping về hướng đó
 canvas.addEventListener("touchstart", (e) => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const touch = e.touches[0];
     const touchX = ((touch.clientX - rect.left) / rect.width) * 800;
-    const touchY = ((touch.clientY - rect.top) / rect.height) * 600;
+    const touchY = ((touch.clientX - rect.top) / rect.height) * 600;
     triggerPing(touchX, touchY);
 });
 
-// 2. TÍCH HỢP ĐIỀU KHIỂN NÚT BẤM ẢO TRÊN MOBILE
+// Mobile Controls
 const setupMobileBtn = (id, direction) => {
     const btn = document.getElementById(id);
     btn.addEventListener("touchstart", (e) => { e.preventDefault(); touchMovement[direction] = true; });
     btn.addEventListener("touchend", (e) => { e.preventDefault(); touchMovement[direction] = false; });
 };
-setupMobileBtn("btn-up", "up");
-setupMobileBtn("btn-down", "down");
-setupMobileBtn("btn-left", "left");
-setupMobileBtn("btn-right", "right");
+setupMobileBtn("btn-up", "up"); setupMobileBtn("btn-down", "down");
+setupMobileBtn("btn-left", "left"); setupMobileBtn("btn-right", "right");
 
-// Nút bấm Ping riêng trên Mobile (Phát xung quanh)
 document.getElementById("btn-ping").addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    triggerPing(player.x + 10, player.y);
+    e.preventDefault(); triggerPing(player.x + 10, player.y);
 });
 
-// Nút Bấm Đi rón rén / Chạy trên Mobile
 const sneakBtn = document.getElementById("btn-sneak");
 sneakBtn.addEventListener("touchstart", (e) => {
     e.preventDefault();
     isSneaking = !isSneaking;
     if (isSneaking) {
-        sneakBtn.textContent = "👣 LẶNG";
-        sneakBtn.style.borderColor = "#00ffcc";
-        sneakBtn.style.color = "#00ffcc";
+        sneakBtn.textContent = "👣 LẶNG"; sneakBtn.style.borderColor = "#00ffcc"; sneakBtn.style.color = "#00ffcc";
     } else {
-        sneakBtn.textContent = "👟 CHẠY";
-        sneakBtn.style.borderColor = "#ffcc00";
-        sneakBtn.style.color = "#ffcc00";
+        sneakBtn.textContent = "👟 CHẠY"; sneakBtn.style.borderColor = "#ffcc00"; sneakBtn.style.color = "#ffcc00";
     }
 });
 
 function resetGame() {
-    player.x = 50; player.y = 50;
-    enemies.forEach((e, idx) => {
-        e.x = [220, 380, 530, 700][idx]; e.y = [150, 450, 200, 400][idx];
-        e.targetX = e.x; e.targetY = e.y; e.state = "patrol"; e.opacity = 0;
-    });
-    pings.length = 0; walls.forEach(w => w.opacity = 0);
+    player.x = 40; player.y = 40;
+    pings.length = 0;
+    generateRandomMap();
     gameRunning = true; win = false;
 }
 
@@ -290,16 +335,15 @@ function checkCollision(circle, rect) {
 function update() {
     if (!gameRunning) return;
 
-    // Tính toán tốc độ (PC nhận Shift, Mobile nhận trạng thái nút Đi Lặng)
+    // Tốc độ di chuyển đã được làm chậm lại để tăng tính chiến thuật
     let moveSpeed = player.speed;
     let sneakActive = keys["ShiftLeft"] || keys["ShiftRight"] || isSneaking;
-    if (sneakActive) moveSpeed = 1.2;
+    if (sneakActive) moveSpeed = 0.8;
 
     let nextX = player.x;
     let nextY = player.y;
     let isMoving = false;
 
-    // Đọc lệnh từ cả bàn phím và nút bấm ảo mobile
     if (keys["KeyW"] || keys["ArrowUp"] || touchMovement.up) { nextY -= moveSpeed; isMoving = true; }
     if (keys["KeyS"] || keys["ArrowDown"] || touchMovement.down) { nextY += moveSpeed; isMoving = true; }
     if (keys["KeyA"] || keys["ArrowLeft"] || touchMovement.left) { nextX -= moveSpeed; isMoving = true; }
@@ -315,43 +359,71 @@ function update() {
     for (let wall of walls) { if (checkCollision(tempPlayerY, wall)) { collideY = true; break; } }
     if (!collideY) player.y = nextY;
 
-    // Sóng âm bước chân khi chạy nhanh
+    // Check ăn vật phẩm hỗ trợ Radar
+    if (radarItem.active && Math.hypot(player.x - radarItem.x, player.y - radarItem.y) < (player.radius + radarItem.size/2)) {
+        radarItem.active = false;
+        // Kích hoạt sóng radar khổng lồ quét toàn màn hình từ tâm bản đồ
+        triggerPing(400, 300, 1000, true);
+    }
+
+    // Tiếng bước chân nhỏ khi di chuyển chạy nhanh
     if (isMoving && !sneakActive && Math.random() < 0.05) {
-        pings.push({ x: player.x, y: player.y, radius: 5, maxRadius: 60, speed: 3, type: "step" });
+        pings.push({ x: player.x, y: player.y, radius: 5, maxRadius: 65, speed: 2.5, type: "step" });
         enemies.forEach(enemy => {
-            if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < 80) {
+            if (Math.hypot(enemy.x - player.x, enemy.y - player.y) < 85) {
                 enemy.state = "chase"; enemy.targetX = player.x; enemy.targetY = player.y;
             }
         });
     }
 
-    // Xử lý các vòng sóng Ping
+    // Cập nhật sóng âm quét trúng vật thể
     for (let i = pings.length - 1; i >= 0; i--) {
         const p = pings[i]; p.radius += p.speed;
+        
         walls.forEach(wall => {
-            if (Math.abs(Math.hypot(p.x - (wall.x + wall.w/2), p.y - (wall.y + wall.h/2)) - p.radius) < 30) wall.opacity = 1.0;
+            if (Math.abs(Math.hypot(p.x - (wall.x + wall.w/2), p.y - (wall.y + wall.h/2)) - p.radius) < 35) wall.opacity = 1.0;
         });
         enemies.forEach(enemy => {
-            if (Math.abs(Math.hypot(p.x - enemy.x, p.y - enemy.y) - p.radius) < 20) enemy.opacity = 1.0;
+            if (Math.abs(Math.hypot(p.x - enemy.x, p.y - enemy.y) - p.radius) < 25) enemy.opacity = 1.0;
         });
+        // Sóng âm quét trúng ĐÍCH ĐẾN ẩn mới làm nó sáng lên
+        if (Math.abs(Math.hypot(p.x - goal.x, p.y - goal.y) - p.radius) < 25) {
+            goal.opacity = 1.0;
+        }
+        // Quét trúng vật phẩm hỗ trợ
+        if (radarItem.active && Math.abs(Math.hypot(p.x - radarItem.x, p.y - radarItem.y) - p.radius) < 25) {
+            radarItem.opacity = 1.0;
+        }
+
         if (p.radius >= p.maxRadius) pings.splice(i, 1);
     }
 
-    walls.forEach(w => { if (w.opacity > 0) w.opacity -= 0.012; });
+    // Bóng tối nuốt chửng dần mọi thứ
+    walls.forEach(w => { if (w.opacity > 0) w.opacity -= 0.010; });
     enemies.forEach(e => { if (e.opacity > 0) e.opacity -= 0.015; });
+    if (goal.opacity > 0) goal.opacity -= 0.010; // Đích đến tự động ẩn lại vào bóng tối
+    if (radarItem.opacity > 0) radarItem.opacity -= 0.010;
 
-    // Cập nhật AI Kẻ địch
+    // Cập nhật AI Kẻ địch đi tuần thông minh hơn trong map ngẫu nhiên
     enemies.forEach(enemy => {
         if (enemy.state === "patrol") {
-            enemy.y += enemy.speed * enemy.dir;
-            if (enemy.y > enemy.patrolYEnd || enemy.y < enemy.patrolYStart) enemy.dir *= -1;
-            enemy.targetX = enemy.x; enemy.targetY = enemy.y;
-            enemy.angle = enemy.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+            enemy.timer++;
+            if (enemy.timer > 120 || Math.hypot(enemy.x - enemy.targetX, enemy.y - enemy.targetY) < 5) {
+                // Chọn một hướng đi ngẫu nhiên mới sau mỗi khoảng thời gian ngắn
+                let randAngle = Math.random() * Math.PI * 2;
+                enemy.targetX = clamp(enemy.x + Math.cos(randAngle) * 100, 20, 780);
+                enemy.targetY = clamp(enemy.y + Math.sin(randAngle) * 100, 20, 580);
+                enemy.timer = 0;
+            }
+            const angle = Math.atan2(enemy.targetY - enemy.y, enemy.targetX - enemy.x);
+            enemy.angle = angle;
+            enemy.x += Math.cos(angle) * enemy.speed;
+            enemy.y += Math.sin(angle) * enemy.speed;
         } else if (enemy.state === "chase") {
             const angle = Math.atan2(enemy.targetY - enemy.y, enemy.targetX - enemy.x);
             enemy.angle = angle;
-            enemy.x += Math.cos(angle) * (enemy.speed * 1.5);
-            enemy.y += Math.sin(angle) * (enemy.speed * 1.5);
+            enemy.x += Math.cos(angle) * (enemy.speed * 1.4);
+            enemy.y += Math.sin(angle) * (enemy.speed * 1.4);
             if (Math.hypot(enemy.targetX - enemy.x, enemy.targetY - enemy.y) < 10) enemy.state = "patrol";
         }
 
@@ -360,6 +432,7 @@ function update() {
         }
     });
 
+    // Thắng game
     if (Math.hypot(player.x - goal.x, player.y - goal.y) < (player.radius + goal.radius)) {
         gameRunning = false; win = true;
     }
@@ -368,30 +441,51 @@ function update() {
 function draw() {
     ctx.fillStyle = "#000000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // Vẽ tường
     walls.forEach(wall => {
         if (wall.opacity > 0) {
-            ctx.shadowBlur = 15; ctx.shadowColor = `rgba(0, 255, 204, ${wall.opacity})`;
+            ctx.shadowBlur = 10; ctx.shadowColor = `rgba(0, 255, 204, ${wall.opacity})`;
             ctx.strokeStyle = `rgba(0, 255, 204, ${wall.opacity})`; ctx.lineWidth = 2;
             ctx.strokeRect(wall.x, wall.y, wall.w, wall.h);
-            ctx.fillStyle = `rgba(0, 255, 204, ${wall.opacity * 0.1})`; ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+            ctx.fillStyle = `rgba(0, 255, 204, ${wall.opacity * 0.05})`; ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
         }
     });
     ctx.shadowBlur = 0;
 
-    ctx.beginPath(); ctx.arc(goal.x, goal.y, goal.radius, 0, Math.PI * 2);
-    ctx.shadowBlur = 10; ctx.shadowColor = goal.color; ctx.fillStyle = goal.color; ctx.fill(); ctx.closePath(); ctx.shadowBlur = 0;
+    // Vẽ ĐÍCH ĐẾN (Chỉ vẽ khi có độ sáng lớn hơn 0 - Tức là đã bị quét trúng)
+    if (goal.opacity > 0) {
+        ctx.beginPath(); ctx.arc(goal.x, goal.y, goal.radius, 0, Math.PI * 2);
+        ctx.shadowBlur = 15; ctx.shadowColor = `rgba(255, 255, 0, ${goal.opacity})`;
+        ctx.fillStyle = `rgba(255, 255, 0, ${goal.opacity})`; ctx.fill(); ctx.closePath();
+        ctx.shadowBlur = 0;
+    }
 
+    // Vẽ VẬT PHẨM HỖ TRỢ RADAR (Nếu chưa bị ăn và đang sáng)
+    if (radarItem.active && radarItem.opacity > 0) {
+        ctx.shadowBlur = 10; ctx.shadowColor = `rgba(0, 162, 255, ${radarItem.opacity})`;
+        ctx.fillStyle = `rgba(0, 162, 255, ${radarItem.opacity})`;
+        ctx.fillRect(radarItem.x - radarItem.size/2, radarItem.y - radarItem.size/2, radarItem.size, radarItem.size);
+        ctx.shadowBlur = 0;
+    }
+
+    // Vẽ Người Chơi
     ctx.beginPath(); ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
     ctx.fillStyle = player.color; ctx.shadowBlur = 12; ctx.shadowColor = player.color; ctx.fill(); ctx.closePath(); ctx.shadowBlur = 0;
 
+    // Vẽ Sóng âm
     pings.forEach(p => {
         ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         const alpha = 1 - (p.radius / p.maxRadius);
-        ctx.strokeStyle = p.type === "ping" ? `rgba(0, 255, 204, ${alpha})` : `rgba(255, 255, 255, ${alpha * 0.5})`;
-        ctx.lineWidth = p.type === "ping" ? 1.5 : 1;
+        if (p.type === "radar") {
+            ctx.strokeStyle = `rgba(0, 162, 255, ${alpha})`; ctx.lineWidth = 3; // Sóng radar dày và có màu xanh dương riêng biệt
+        } else {
+            ctx.strokeStyle = p.type === "ping" ? `rgba(0, 255, 204, ${alpha})` : `rgba(255, 255, 255, ${alpha * 0.4})`;
+            ctx.lineWidth = p.type === "ping" ? 1.5 : 1;
+        }
         ctx.stroke(); ctx.closePath();
     });
 
+    // Vẽ kẻ địch
     enemies.forEach(enemy => {
         if (enemy.opacity > 0) {
             ctx.save(); ctx.translate(enemy.x, enemy.y); ctx.rotate(enemy.angle);
@@ -401,20 +495,21 @@ function draw() {
         }
     });
 
+    // Màn hình Game Over
     if (!gameRunning) {
-        ctx.fillStyle = "rgba(0, 0, 0, 0.8)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.85)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.font = "bold 30px Arial"; ctx.textAlign = "center";
         ctx.fillStyle = win ? "#00ffcc" : "#ff3333";
-        ctx.fillText(win ? "BẠN ĐÃ THOÁT THÀNH CÔNG!" : "BẠN ĐÃ BỊ BẮT!", canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillText(win ? "BẠN ĐÃ THOÁT THÀNH CÔNG!" : "BẠN ĐÃ BỊ BẮT TRONG BÓNG TỐI!", canvas.width / 2, canvas.height / 2 - 20);
         ctx.font = "18px Arial"; ctx.fillStyle = "#ffffff";
-        ctx.fillText("Chạm màn hình/Click để chơi lại", canvas.width / 2, canvas.height / 2 + 30);
+        ctx.fillText("Chạm màn hình/Click để tạo map mới chơi lại", canvas.width / 2, canvas.height / 2 + 30);
     }
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
+generateRandomMap();
 loop();
 </script>
 
 </body>
-  </html>
-  
+</html>
